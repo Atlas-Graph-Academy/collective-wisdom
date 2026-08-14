@@ -1,27 +1,56 @@
-# ThreeJS starter
+# Collective wisdom
 
-This is a general template for ThreeJS applications. It uses [Parcel](https://github.com/parcel-bundler/parcel) to create the bundle and [Tweakpane](https://github.com/cocopon/tweakpane) for live updates.
+A single field of 2,879 instanced triangles that morphs, on scroll, from a brain
+through a lightbulb and a sphere, scatters, reassembles as the brain, and finally
+opens out into a spiral galaxy you can fly into.
 
-# Before we start
-This has been developed with NodeJS `14.15.5`; it should work with other versions too, but in case something doesn't work I recommend to switch to version `14.15.5` with [nvm](https://github.com/nvm-sh/nvm).
+Forked from [kekkorider/threejs-dala](https://github.com/kekkorider/threejs-dala)
+by Francesco Michelini, which recreates the WebGL module of the old
+[Dala.ai](https://dala.ai) site (originally built by
+[Green Chameleon](https://www.craftedbygc.com/)). The original MIT licence is
+kept in `LICENSE`. Everything below the first state is added here.
 
-## Setup
+## What's in it
+
+- **Morphing.** Five targets on one set of instances, blended in the vertex
+  shader from a single `uProgress` scalar. Every target except the brain is
+  generated at runtime in `src/shapes.js` — no extra assets. Point ordering is
+  sorted by latitude band so instances travel to a neighbouring destination
+  rather than across the whole shape.
+- **Scroll timeline.** GSAP ScrollTrigger, alternating dwell and morph segments,
+  so a state can be sat in and looked at rather than flicked past. Scrolling
+  during a dwell spins the shape; dragging left/right spins it by hand.
+- **Continuous motion.** A flow field, a slow breath, per-instance shimmer and an
+  idle rotation, so nothing is ever a still image.
+- **Galaxy.** A 90,000-point field on an exponential disc with logarithmic arms,
+  a dust lane and stellar-population colour. The instances can carry the galaxy's
+  *shape*, but a galaxy reads as continuous light, so the density comes from
+  this separate field.
+- **Dive.** Scrolling past the galaxy flies the camera into it, aimed at whatever
+  point the cursor is over.
+
+## Running it
+
+Developed against Node 22. Two things to know:
+
+1. **Do not put this in a path containing spaces.** `deasync`, pulled in by
+   Parcel 1, is built by node-gyp, which does not quote paths — the native build
+   fails with a confusing missing-file error.
+2. **Parcel 1 needs the legacy OpenSSL provider** on modern Node.
+
 ```shell
-$ yarn install
+yarn install
 ```
 
-## Develop
-
-Run
-
 ```shell
-$ yarn dev
+NODE_OPTIONS=--openssl-legacy-provider yarn dev
 ```
 
-then open a new browser window and navigate to `http://localhost:1234`
-
-## Build
+Then open `http://localhost:1234`.
 
 ```shell
-$ yarn build
+NODE_OPTIONS=--openssl-legacy-provider yarn build
 ```
+
+Note that `yarn build` starts with `rm -rf dist`, which will pull the rug out
+from under a running dev server — restart it afterwards.

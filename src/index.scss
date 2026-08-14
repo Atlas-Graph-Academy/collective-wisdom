@@ -2,24 +2,38 @@
   box-sizing: border-box;
 }
 
+// Pre-load fallback only — the scene draws its own copy of this, because the
+// bloom pass can only composite against pixels the renderer produced.
 html {
-  background: #692a84;
-  background: radial-gradient(circle, #692a84 0%, #3c184c 65%);
+  background: #000;
+  background: radial-gradient(circle, #0b0713 0%, #000 65%);
 }
 
 body {
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  overflow: hidden;
-  height: 100vh;
+  color: white;
+  cursor: grab;
   margin: 0;
   padding: 0;
+
+  &.is-dragging {
+    cursor: grabbing;
+    user-select: none;
+  }
 }
 
+// The canvas is pinned behind the document now — the scroll timeline needs the
+// page to actually scroll, so `overflow: hidden` on the body had to go.
 #app {
-  height: 100%;
+  height: 100vh;
+  left: 0;
+  position: fixed;
+  top: 0;
   width: 100%;
+  z-index: 0;
 
   canvas {
+    display: block;
     opacity: 0;
     outline: none;
     transition: 1s opacity;
@@ -30,22 +44,111 @@ body {
   }
 }
 
+#content {
+  position: relative;
+  z-index: 1;
+}
+
+// Each section is taller than the viewport and its copy sticks for the whole
+// stretch. That extra height is the dwell: the scroll distance the timeline
+// spends spinning a finished shape instead of morphing to the next one.
+.section {
+  min-height: 180vh;
+  position: relative;
+
+  &--end .section__inner {
+    margin-left: auto;
+    text-align: right;
+  }
+
+  &--center .section__inner {
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  // The flight needs room to accelerate, and its copy should get out of the way
+  // rather than sit pinned over the approach.
+  &--dive {
+    min-height: 300vh;
+
+    .section__body {
+      align-items: flex-start;
+      height: auto;
+      padding-top: 22vh;
+      position: static;
+    }
+
+    .section__inner {
+      margin: 0 auto;
+      text-align: center;
+    }
+  }
+
+  &__body {
+    align-items: center;
+    display: flex;
+    height: 100vh;
+    padding: 0 20px;
+    position: sticky;
+    top: 0;
+
+    @media (min-width: 767px) {
+      padding: 0 60px;
+    }
+  }
+
+  &__inner {
+    max-width: 420px;
+    width: 100%;
+
+    &--wide {
+      max-width: 560px;
+    }
+
+    p {
+      font-size: 15px;
+      line-height: 1.5;
+      opacity: 0.75;
+    }
+  }
+
+  &__title {
+    font-size: 44px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    margin: 0 0 20px;
+
+    @media (min-width: 767px) {
+      font-size: 68px;
+    }
+  }
+
+  &__kicker {
+    color: #FEAE51;
+    font-size: 13px !important;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    opacity: 1 !important;
+    text-transform: uppercase;
+  }
+}
+
 #info {
-  bottom: 40px;
-  color: white;
   font-size: 14px;
-  padding: 0 20px;
-  position: fixed;
-  width: 100%;
+  padding: 60px 20px 60px;
+  position: relative;
+  z-index: 1;
 
   @media (min-width: 767px) {
     font-size: 16px;
-    padding: 0 40px;
+    padding: 60px;
   }
 
   p {
     line-height: 1.4;
     margin: 0;
+    opacity: 0.75;
 
     & + p {
       margin-top: 0.5em;

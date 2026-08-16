@@ -13,6 +13,10 @@ import {
 
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler'
 
+import { spiralGalaxy, GALAXY_TILT } from './galaxy'
+
+export { GALAXY_TILT }
+
 /**
  * Every morph target has to expose exactly the same number of points as the
  * brain model, because the morph is a per-instance `mix()` between two of these
@@ -114,164 +118,62 @@ export function cloudPoints(count, radius) {
   return points
 }
 
-// The disc is generated flat in XZ and then pitched towards the camera by this
-// much. Without it a disc in the camera's line of sight is just a bright line.
-export const GALAXY_TILT = -1.12
+/**
+ * A cheap, smooth, deterministic scalar field in [0, 1]. Three sines beating
+ * against each other at incommensurate frequencies — enough low-frequency
+ * structure to sculpt lobes out of a sphere without shipping a noise library.
+ */
+function lobeField(d) {
+  const n =
+    Math.sin(d.x*3.1 + d.y*1.7)
+    + Math.sin(d.y*2.7 - d.z*2.3 + 1.3)
+    + Math.sin(d.z*3.4 + d.x*1.1 - 0.7)
+    + 0.5*Math.sin(d.x*6.2 - d.y*5.1 + d.z*4.3)
 
-// Two major arms, like the Milky Way's Perseus and Scutum-Centaurus. Four crisp
-// arms is what makes a spiral read as a pinwheel graphic instead of a galaxy.
-const GALAXY_ARMS = 2
-
-// Pitch angle of the logarithmic spiral, in radians (~17deg). Real Sb spirals
-// sit around 10-20deg; this is what sets how tightly the arms wind.
-const GALAXY_PITCH = 0.3
-
-// Where the arms start, as a fraction of the radius.
-const GALAXY_INNER = 0.085
-
-// Exponential disc scale length. Surface density falls as exp(-r/h), which is
-// the single biggest reason a real galaxy looks continuous rather than drawn.
-const GALAXY_SCALE_LENGTH = 0.36
-
-const GALAXY_BULGE_SHARE = 0.17
-
-// Points placed with no arm bias at all. Real discs are lit between the arms
-// too — leaving that gap empty is what makes arms look like ribbons.
-const GALAXY_SMOOTH_SHARE = 0.26
-
-const GALAXY_COLOR_CORE = new Color(0xFFC97A)
-const GALAXY_COLOR_MID = new Color(0xFFEBC8)
-const GALAXY_COLOR_ARM = new Color(0x9FBEFF)
-const GALAXY_COLOR_HII = new Color(0xFF6E9F)
-
-function gaussian() {
-  let u = 0
-  let v = 0
-
-  while (u === 0) u = Math.random()
-  while (v === 0) v = Math.random()
-
-  return Math.sqrt(-2*Math.log(u))*Math.cos(Math.PI*2*v)
+  return MathUtils.clamp(n/3.5*0.5 + 0.5, 0, 1)
 }
 
 /**
- * A spiral galaxy built the way one actually looks rather than the way one is
- * usually drawn. The differences that matter:
- *
- * - Radius is drawn from an exponential disc, so density falls off smoothly
- *   instead of every point sitting on a ribbon.
- * - Arms are a *bias* applied to the azimuth of disc stars, not a set of
- *   curves that points are placed along, and a quarter of the disc ignores the
- *   bias entirely so the inter-arm regions still glow.
- * - The spiral is logarithmic (theta = ln(r/r0)/tan(pitch)) rather than a fixed
- *   twist per unit radius, which is why the arms keep winding at the rim.
- * - A dust lane runs along the inner edge of each arm.
- * - Colour follows stellar population: an old, metal-rich yellow bulge, bluer
- *   star-forming arms, and pink HII knots.
- *
- * Returns flat arrays so the same generator can fill a 90k-point field without
- * allocating an object per star.
+ * The organism: a single cell-like body, in the spirit of Andy Lomas's growth
+ * forms — a sphere pushed into lobes by a smooth field, a few buds pinched off
+ * it, and a thin filling so it reads as a body rather than a shell. Roughly
+ * the brain's size, so the step from it to the brain is a change of form, not
+ * of scale.
  */
-export function spiralGalaxy(count, radius) {
-  const positions = new Float32Array(count*3)
-  const colors = new Float32Array(count*3)
-  const sizes = new Float32Array(count)
+export function organismPoints(count, radius) {
+  const points = []
+  const dirs = fibonacciSphere(count, 1)
 
-  const cos = Math.cos(GALAXY_TILT)
-  const sin = Math.sin(GALAXY_TILT)
+  const buds = [
+    { c: new Vector3(0.62, 0.38, 0.12), r: 0.42 },
+    { c: new Vector3(-0.55, -0.22, 0.4), r: 0.36 },
+    { c: new Vector3(0.1, -0.6, -0.42), r: 0.34 },
+    { c: new Vector3(-0.3, 0.55, -0.45), r: 0.3 }
+  ]
 
-  const inner = radius*GALAXY_INNER
-  const scaleLength = radius*GALAXY_SCALE_LENGTH
-  const bulgeCount = Math.floor(count*GALAXY_BULGE_SHARE)
+  for (let i = 0; i < count; i++) {
+    const d = dirs[i]
+    const lobe = lobeField(d)
 
-  const color = new Color()
+    // Body radius in this direction: a lobed sphere.
+    let r = 0.58 + 0.34*lobe
 
-  let i = 0
+    // Buds: where the direction points into a bud, the surface bulges out to it.
+    buds.forEach(bud => {
+      const along = d.dot(bud.c.clone().normalize())
+      const reach = bud.c.length() + bud.r
+      const w = MathUtils.smoothstep(along, 0.55, 1)
 
-  while (i < count) {
-    let x
-    let y
-    let z
-    let brightness = 1
-    let size
+      r = Math.max(r, MathUtils.lerp(r, reach*(0.8 + 0.2*lobe), w))
+    })
 
-    if (i < bulgeCount) {
-      // Old, dense, slightly flattened spheroid.
-      const r = radius*0.17*Math.pow(Math.random(), 0.62)
-      const theta = MathUtils.randFloat(0, Math.PI*2)
-      const phi = Math.acos(MathUtils.randFloat(-1, 1))
+    // Most points on the skin, the rest inside — a body, not a balloon.
+    const inside = (i%5 === 0) ? Math.cbrt(Math.random())*0.85 : MathUtils.randFloat(0.94, 1.02)
 
-      x = Math.sin(phi)*Math.cos(theta)*r
-      z = Math.sin(phi)*Math.sin(theta)*r
-      y = Math.cos(phi)*r*0.6
-
-      color.copy(GALAXY_COLOR_CORE).lerp(GALAXY_COLOR_MID, Math.random()*0.5)
-      brightness = 0.75 + Math.random()*0.5
-      size = Math.pow(Math.random(), 2.4)*2 + 0.5
-    } else {
-      // Exponential disc: r = -h*ln(1 - u).
-      const r = -scaleLength*Math.log(1 - Math.random())
-
-      if (r < inner || r > radius*1.08) continue
-
-      const t = r / radius
-      const smooth = Math.random() < GALAXY_SMOOTH_SHARE
-
-      let theta
-
-      if (smooth) {
-        theta = MathUtils.randFloat(0, Math.PI*2)
-      } else {
-        // Arms are tightly wound near the hub, so their angular width has to be
-        // wider there to cover the same physical spread.
-        const spread = 0.16 + 0.4*Math.exp(-r / (0.3*radius))
-        const offset = gaussian()*spread
-
-        // Dust lane: a deficit of stars just inside the arm ridge.
-        if (Math.abs(offset + spread*1.15) < spread*0.34 && Math.random() < 0.82) continue
-
-        const arm = MathUtils.randInt(0, GALAXY_ARMS - 1)
-
-        theta = (arm / GALAXY_ARMS)*Math.PI*2 + Math.log(r / inner) / Math.tan(GALAXY_PITCH) + offset
-      }
-
-      x = Math.cos(theta)*r
-      z = Math.sin(theta)*r
-
-      // Thin disc that puffs up towards the hub.
-      y = gaussian()*radius*(0.011 + 0.055*Math.exp(-r / (0.14*radius)))
-
-      color.copy(GALAXY_COLOR_MID).lerp(GALAXY_COLOR_ARM, MathUtils.smoothstep(t, 0.06, 0.5))
-
-      if (r < radius*0.3) {
-        color.lerp(GALAXY_COLOR_CORE, MathUtils.smoothstep(t, 0.3, 0.05)*0.7)
-      }
-
-      brightness = 0.45 + Math.random()*0.55
-      size = Math.pow(Math.random(), 2.6)*1.9 + 0.4
-
-      // Star-forming regions, only out in the arms where they belong.
-      if (!smooth && r > radius*0.2 && Math.random() < 0.045) {
-        color.copy(GALAXY_COLOR_HII)
-        brightness = 1.1 + Math.random()*0.5
-        size *= 2.1
-      }
-    }
-
-    positions[i*3 + 0] = x
-    positions[i*3 + 1] = y*cos - z*sin
-    positions[i*3 + 2] = y*sin + z*cos
-
-    colors[i*3 + 0] = color.r*brightness
-    colors[i*3 + 1] = color.g*brightness
-    colors[i*3 + 2] = color.b*brightness
-
-    sizes[i] = size
-
-    i++
+    points.push(d.clone().multiplyScalar(r*inside*radius))
   }
 
-  return { positions, colors, sizes }
+  return points
 }
 
 /**
@@ -279,7 +181,7 @@ export function spiralGalaxy(count, radius) {
  * it. They overlay the dense field exactly because both come from one generator.
  */
 export function galaxyPoints(count, radius) {
-  const { positions } = spiralGalaxy(count, radius)
+  const { positions } = spiralGalaxy(count, radius, { structural: true })
   const points = []
 
   for (let i = 0; i < count; i++) {
@@ -303,25 +205,110 @@ export function createGalaxyMesh() {
 }
 
 /**
- * Stars. Far enough out that the camera's parallax barely touches them, which
- * is exactly how a sky should behave.
+ * The sky. Two facts carry the look of a real starfield and neither is
+ * "scatter white dots":
+ *
+ *  - Brightness follows a power law. Each magnitude fainter there are ~2.5x
+ *    more stars, so almost everything is at the threshold of visibility and
+ *    a handful of stars dominate. A field where every star is roughly the
+ *    same size reads as confetti.
+ *  - Stars have colour, and the mix is skewed. Bright naked-eye stars are
+ *    mostly white-blue (A/B), the yellow/orange (G/K) ones are commoner but
+ *    fainter, and the reds are rare at any brightness you can see.
+ *
+ * `positions` sit on a shell far outside the scene; `colors` carry
+ * brightness pre-multiplied; `sizes` are in CSS px; `kinds` flag the few
+ * background galaxies (1) among the stars (0) so the shader can give them a
+ * fuzzy profile instead of a stellar one.
  */
-export function starPoints(count, radius) {
-  const points = []
+const STAR_TYPES = [
+  // colour,   weight, brightness bias
+  [0x9BB4FF,   0.06,   1.35],   // B  — blue-white, rare, bright
+  [0xC9D6FF,   0.14,   1.20],   // A
+  [0xF3F2FF,   0.16,   1.05],   // F
+  [0xFFF4E4,   0.24,   0.95],   // G  — solar
+  [0xFFD9B0,   0.28,   0.85],   // K
+  [0xFFB884,   0.12,   0.70]    // M  — orange-red, faint
+]
 
-  for (let i = 0; i < count; i++) {
+const GALAXY_TYPES = [
+  0xF7EBD8, // old elliptical, warm
+  0xE8ECFF, // spiral seen far off, cool
+  0xFFE7CF
+]
+
+export function skyPoints(count, radius, galaxyCount = 0) {
+  const total = count + galaxyCount
+
+  const positions = new Float32Array(total*3)
+  const colors = new Float32Array(total*3)
+  const sizes = new Float32Array(total)
+  const phases = new Float32Array(total)
+  const kinds = new Float32Array(total)
+
+  const color = new Color()
+
+  const totalWeight = STAR_TYPES.reduce((sum, t) => sum + t[1], 0)
+
+  for (let i = 0; i < total; i++) {
     const theta = MathUtils.randFloat(0, Math.PI*2)
     const phi = Math.acos(MathUtils.randFloat(-1, 1))
     const r = radius*MathUtils.randFloat(0.85, 1.15)
 
-    points.push(new Vector3(
-      Math.sin(phi)*Math.cos(theta)*r,
-      Math.cos(phi)*r,
-      Math.sin(phi)*Math.sin(theta)*r
-    ))
+    positions[i*3 + 0] = Math.sin(phi)*Math.cos(theta)*r
+    positions[i*3 + 1] = Math.cos(phi)*r
+    positions[i*3 + 2] = Math.sin(phi)*Math.sin(theta)*r
+
+    phases[i] = Math.random()
+
+    if (i < count) {
+      // Spectral type by weight.
+      let pick = Math.random()*totalWeight
+      let type = STAR_TYPES[STAR_TYPES.length - 1]
+
+      for (let t = 0; t < STAR_TYPES.length; t++) {
+        pick -= STAR_TYPES[t][1]
+
+        if (pick <= 0) { type = STAR_TYPES[t]; break }
+      }
+
+      // Magnitude distribution: a steep power law, so most stars sit near the
+      // floor and a few percent stand out.
+      const u = Math.random()
+      const luminosity = Math.pow(u, 4.0)*type[2]
+
+      color.setHex(type[0])
+
+      // Very bright stars wash towards white — the eye (and the sensor)
+      // saturate.
+      color.lerp(new Color(0xFFFFFF), MathUtils.smoothstep(luminosity, 0.5, 1.2)*0.5)
+
+      const brightness = 0.36 + 1.4*luminosity
+
+      colors[i*3 + 0] = color.r*brightness
+      colors[i*3 + 1] = color.g*brightness
+      colors[i*3 + 2] = color.b*brightness
+
+      // Size tracks brightness only weakly — a bright star is a bigger blur,
+      // not a bigger disc.
+      sizes[i] = 0.9 + 3.2*Math.pow(luminosity, 0.6)
+      kinds[i] = 0
+    } else {
+      // Background galaxies: faint, fuzzy, a few px across.
+      color.setHex(GALAXY_TYPES[MathUtils.randInt(0, GALAXY_TYPES.length - 1)])
+
+      const brightness = 0.14 + 0.16*Math.random()
+
+      colors[i*3 + 0] = color.r*brightness
+      colors[i*3 + 1] = color.g*brightness
+      colors[i*3 + 2] = color.b*brightness
+
+      sizes[i] = 3.5 + Math.random()*5.5
+      kinds[i] = 1
+    }
   }
 
-  return points
+  return { positions, colors, sizes, phases, kinds }
 }
 
 /**

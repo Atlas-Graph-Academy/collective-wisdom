@@ -1,17 +1,21 @@
 uniform float uOpacity;
 
 varying vec3 vColor;
+varying float vFade;
 
 void main() {
-  float d = length(gl_PointCoord - 0.5);
+  float d = length(gl_PointCoord - 0.5)*2.0;
 
-  if (d > 0.5) discard;
+  if (d > 1.0) discard;
 
-  // Squared falloff gives a stellar profile — a bright centre with a soft
-  // skirt — rather than the flat disc a linear ramp produces. Additive
-  // blending then lets dense regions accumulate into a continuous haze, which
-  // is the whole point: a galaxy reads as light, not as countable dots.
-  float falloff = smoothstep(0.5, 0.0, d);
+  float core = 1.0 - d;
 
-  gl_FragColor = vec4(vColor, uOpacity*falloff*falloff);
+  // A tight core sitting in a much wider skirt, rather than a single squared
+  // falloff. One falloff gives a bead, and a field of beads stays countable no
+  // matter how many you add; it is the overlap of the *skirts* that fuses
+  // neighbouring stars into a continuous surface, which is the whole
+  // difference between a particle system and a photograph of a galaxy.
+  float profile = 0.52*pow(core, 5.0) + 0.48*pow(core, 1.7);
+
+  gl_FragColor = vec4(vColor, uOpacity*profile*vFade);
 }

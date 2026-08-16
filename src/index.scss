@@ -15,9 +15,17 @@ body {
   cursor: grab;
   margin: 0;
   padding: 0;
+  // One finger still scrolls the page; two fingers reach the scene as a pinch
+  // instead of the browser zooming the document.
+  touch-action: pan-y;
 
   &.is-dragging {
     cursor: grabbing;
+    user-select: none;
+  }
+
+  &.is-panning {
+    cursor: move;
     user-select: none;
   }
 }
@@ -66,23 +74,24 @@ body {
     text-align: center;
   }
 
-  // The flight needs room to accelerate, and its copy should get out of the way
-  // rather than sit pinned over the approach.
-  &--dive {
-    min-height: 300vh;
+  // Section heights follow the timeline: roughly 60vh per timeline unit, so
+  // each act's copy stays pinned for the stretch its state is on screen.
+  // The cosmos gets the dwell, the flight and the arrival; its copy lets go
+  // early rather than sit pinned over the approach.
+  &--cosmos {
+    min-height: 410vh;
 
     .section__body {
-      align-items: flex-start;
-      height: auto;
-      padding-top: 22vh;
+      align-items: center;
+      height: 100vh;
       position: static;
     }
-
-    .section__inner {
-      margin: 0 auto;
-      text-align: center;
-    }
   }
+
+  &--dust { min-height: 100vh; }
+  &--resonance { min-height: 300vh; }
+  &--organism { min-height: 210vh; }
+  &--brain { min-height: 210vh; }
 
   &__body {
     align-items: center;

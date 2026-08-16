@@ -158,7 +158,10 @@ class App {
       // Timeline units the arrival takes: the flight decelerating into the
       // cloud while the galaxy becomes the dust. Long enough to be a passage
       // rather than a swap.
-      arrive: 1.8
+      arrive: 1.8,
+      // Where the flight comes to rest, and where the dust act is watched from.
+      // Barely off `diveDistance` on purpose — see the note at the arrival.
+      dustDistance: 0.7
     }
 
     this.dragParams = {
@@ -234,7 +237,14 @@ class App {
       farFade: 0.8,
       // How far off-centre the aim may wander, as a fraction of the galaxy
       // radius. 1 = the rim.
-      reach: 1
+      reach: 1,
+      // Viewports of travel that give back about two thirds of a user zoom.
+      // See `_releaseZoom()` — this is what stops a zoom from multiplying into
+      // every shot the story composes after it.
+      release: 0.4,
+      // Levels of wheel the zoom has to refuse before the surplus pushes the
+      // story instead. See `_advance()`.
+      spill: 0.05
     }
 
     // Travelling the story. The wheel belongs to the scene, so advancing the
@@ -267,6 +277,11 @@ class App {
 
     // Where the cursor last pointed on the galaxy plane, and the smoothed
     // version the camera actually aims at.
+    // The grain the flight is aimed at, in the field's own frame, and the same
+    // point in world space once the disc's rotation has been applied. Storing
+    // it locally is what keeps the aim pinned to that one grain while the disc
+    // keeps turning underneath it.
+    this.diveTargetLocal = new Vector3()
     this.diveTargetRaw = new Vector3()
     this.diveTarget = new Vector3()
     this.aim = new Vector3()
@@ -278,8 +293,10 @@ class App {
       // How quickly the aim point chases the cursor. Low, so the flight path
       // stays smooth instead of snapping around with every twitch.
       easing: 0.04,
-      // Extra point size at full dive, to sell the rush past the camera.
-      warp: 0.55
+      // Extra point size at full dive, to sell the rush past the camera. Kept
+      // modest: inflating every sprite is also the fastest way to turn the
+      // inside of the disc into one saturated white patch.
+      warp: 0.25
     }
 
     // Retuned for the black sky. The old threshold of 0.45 existed to keep the
@@ -332,7 +349,12 @@ class App {
       opacity: 0.9,
       pointScale: 1,
       // Ceiling in CSS pixels on how large a single star may draw.
-      maxPointSize: 22
+      maxPointSize: 22,
+      // World units. Sprites nearer than this to the camera fade out, and are
+      // gone by a fifth of it. The size cap alone does not save the frame once
+      // the flight is inside the disc — see the note in `galaxy.vertex.glsl`.
+      // Sized against the arrival, which parks the camera 0.45 out.
+      nearFade: 0.38
     }
 
     this.debrisParams = {
@@ -493,9 +515,25 @@ class App {
     // The dense field is the cosmos. It is 600k sprites standing in for light
     // the 2,879 instances could never carry on their own; once the flight is
     // deep enough that individual grains resolve, the instances take over and
-    // the field goes. Nothing cuts — the two overlap through the handover.
-    const galaxyOpacity =
-      (1 - MathUtils.smoothstep(progress, 0.15, 0.75))*this.galaxyParams.opacity
+    // the field goes.
+    //
+    // One monotone curve over the whole passage, read off the timeline's own
+    // clock rather than off the camera. That distinction is the difference
+    // between a fade and a step: `dive.amount` *unwinds* during the arrival, so
+    // anything keyed to it releases its suppression halfway through — the field
+    // surged 68% brighter and only then went out. The camera comes back; the
+    // story does not.
+    //
+    // Starting the fade when the flight starts also means there is nothing left
+    // to do at the handover. Most of it has already happened by then, which is
+    // what makes the join invisible rather than merely smooth.
+    const { storyMarks: marks } = this
+
+    const galaxyness = marks
+      ? 1 - MathUtils.smoothstep(this.scrollTimeline.time(), marks.dive, marks.dust)
+      : 1
+
+    const galaxyOpacity = galaxyness*this.galaxyParams.opacity
 
     // The sky fades as the background lifts.
     this.stars.material.uniforms.uOpacity.value =
@@ -517,7 +555,6 @@ class App {
     this.galaxyField.material.uniforms.uOpacity.value = galaxyOpacity*farFade
     this.galaxyField.visible = this.galaxyReady && galaxyOpacity > 0.002
 
-    const galaxyness = galaxyOpacity/this.galaxyParams.opacity
     const bodyness = MathUtils.smoothstep(progress, 2, 3.2)
 
     const { bloomParams: b } = this
@@ -543,8 +580,49 @@ class App {
     this._updateSpin(delta)
     this._updateTravel()
 
+    this._releaseZoom()
     this._updateZoom(delta)
     this._updateCamera()
+  }
+
+  /**
+   * Hands a user zoom back to the timeline as the story travels.
+   *
+   * The camera distance is `base/magnification`: the timeline animates `base`,
+   * the user's zoom divides it. Left sticky, that division rides along for the
+   * rest of the piece and quietly ruins every shot after it — most visibly the
+   * arrival, whose whole choreography is the flight closing to 0.45. Zoomed
+   * out two levels, the dive's approach is divided straight back out again and
+   * the handover never happens even though `progress` has moved on.
+   *
+   * So zoom is a deviation, not a state: look all you like, and the moment the
+   * story moves it starts giving the framing back. Decay is against scroll
+   * distance rather than time, so it is the *travel* that reclaims the camera —
+   * sitting still and studying something never takes it away from you.
+   */
+  _releaseZoom() {
+    const scroll = window.scrollY
+
+    if (this._lastScroll === undefined) this._lastScroll = scroll
+
+    const moved = Math.abs(scroll - this._lastScroll)
+
+    this._lastScroll = scroll
+
+    if (!moved || this.zoom.target === 0) return
+
+    const k = 1 - Math.exp(-moved/(window.innerHeight*this.zoomParams.release))
+
+    this.zoom.target -= this.zoom.target*k
+
+    // The aim comes back to centre with it, or the story's shots stay parked
+    // off to one side long after the zoom that pushed them there is gone.
+    this.zoomPivotTarget.multiplyScalar(1 - k)
+
+    if (Math.abs(this.zoom.target) < 1e-3) {
+      this.zoom.target = 0
+      this.zoomPivotTarget.set(0, 0, 0)
+    }
   }
 
   /**
@@ -571,8 +649,15 @@ class App {
    * on it.
    */
   _updateCamera() {
-    // Chase the cursor's point on the galaxy plane. Slow, so the flight path is
-    // a curve rather than a series of jerks.
+    // Where the aimed-at grain is right now. `_updateSpin` has already
+    // refreshed the matrix this frame, so the aim tracks that one grain
+    // through the disc's rotation instead of drifting off it.
+    this.diveTargetRaw
+      .copy(this.diveTargetLocal)
+      .applyMatrix4(this.instancedMesh.matrixWorld)
+
+    // Chase it slowly, so the flight path is a curve rather than a series of
+    // jerks as the cursor moves from grain to grain.
     this.diveTarget.lerp(this.diveTargetRaw, this.diveParams.easing)
 
     // The point the camera orbits slides from the origin out to the dive
@@ -715,6 +800,45 @@ class App {
    * World point under a client position on whatever the particles currently
    * resemble, or null.
    */
+  /**
+   * The nearest grain to a world point, in the field's own frame.
+   *
+   * The proxy the cursor actually hits is a flat disc — a stand-in with no
+   * stars in it — so aiming the flight at the raw hit meant aiming at an
+   * arbitrary spot in empty space and hoping something was there. It lands on
+   * one of the 2,879 grains instead: the flight ends *on* a node, and since
+   * those same grains are what the dust is made of, the next act starts from
+   * the exact thing that was flown into.
+   *
+   * A linear scan over 2,879 points per mouse move is nothing, and it saves
+   * carrying a spatial index that would have to be rebuilt as the disc turns.
+   */
+  _nearestNode(worldPoint) {
+    if (!this.galaxyNodes) return null
+
+    const local = this.instancedMesh.worldToLocal(worldPoint.clone())
+
+    // Never aim at the rim: the flight has to end up inside the disc, where
+    // there is still material to fly through.
+    const reach = this.galaxyRadius*this.diveParams.reach
+
+    let best = null
+    let bestDistance = Infinity
+
+    this.galaxyNodes.forEach(node => {
+      if (node.length() > reach) return
+
+      const distance = node.distanceToSquared(local)
+
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = node
+      }
+    })
+
+    return best
+  }
+
   _hitAt(clientX, clientY) {
     const x = clientX/this.container.offsetWidth*2 - 1
     const y = -(clientY/this.container.offsetHeight*2 - 1)
@@ -935,6 +1059,7 @@ class App {
         uMaxSize: { value: this.galaxyParams.maxPointSize },
         uColorRange: { value: COLOR_RANGE },
         uSizeRange: { value: SIZE_RANGE },
+        uNearFade: { value: this.galaxyParams.nearFade },
         uPixelRatio: { value: pixelRatio }
       }
     }))
@@ -955,6 +1080,7 @@ class App {
         uScale: { value: this.galaxyParams.pointScale },
         uMaxSize: { value: this.galaxyParams.maxPointSize*1.5 },
         uSizeRange: { value: SIZE_RANGE },
+        uNearFade: { value: this.galaxyParams.nearFade },
         uPixelRatio: { value: pixelRatio }
       }
     }))
@@ -1243,6 +1369,7 @@ class App {
 
     // Give every target the same ordering so instance `i` travels to a
     // neighbouring destination instead of across the whole shape.
+    // Kept as the flight's aiming set — see `_nearestNode()`.
     const targets = {
       aPosGalaxy: sortSpherically(galaxy),
       aPosDust: sortSpherically(dust),
@@ -1253,6 +1380,8 @@ class App {
     Object.entries(targets).forEach(([name, points]) => {
       this.instancedMesh.geometry.setAttribute(name, new InstancedBufferAttribute(pointsToArray(points), 3))
     })
+
+    this.galaxyNodes = targets.aPosGalaxy
 
     this._createResonance(targets)
 
@@ -1432,7 +1561,9 @@ class App {
       }
     })
 
-    const { hold, morph, holdSpin, morphSpin, dive, diveDistance, arrive } = this.scrollParams
+    const {
+      hold, morph, holdSpin, morphSpin, dive, diveDistance, arrive, dustDistance
+    } = this.scrollParams
     const { waveDuration } = this.storyParams
 
     const marks = {}
@@ -1475,11 +1606,17 @@ class App {
     // `power2.out` on the camera and `none` on the morph on purpose: the
     // travel decelerates into the cloud while the shapes keep changing at a
     // constant rate, which is what stops the arrival reading as a stop.
+    //
+    // It barely backs off at all. Retreating here — this used to pull out to
+    // 1.7, nearly four times — is the single thing that made the whole passage
+    // read as diving twice: in, hauled back out, then in again for the acts
+    // that follow. The point of the flight is to end up *among* the grains, so
+    // it ends up among them and stays there.
     marks.arrive = at
     timeline
       .to(this.morph, { progress: 1, duration: arrive, ease: 'none' }, at)
       .to(this.dive, { amount: 0, duration: arrive, ease: 'power2.out' }, at)
-      .to(this.cameraDistance, { base: 1.7, duration: arrive, ease: 'power2.out' }, at)
+      .to(this.cameraDistance, { base: dustDistance, duration: arrive, ease: 'power2.out' }, at)
       .to(this.spin, { scroll: `+=${morphSpin*0.5}`, duration: arrive, ease: 'none' }, at)
     at += arrive
 
@@ -1492,10 +1629,17 @@ class App {
     // grain by grain, and each one it reaches falls into the shared rhythm and
     // wires itself to the next. `progress` moves 1→2 with the wave, so the
     // shader can tell "before" from "after" without a second clock.
+    //
+    // The camera withdraws here, and only here. Standing among the grains is
+    // the right place to watch the first one get struck, and the wrong place to
+    // watch the front cross the whole field — so the retreat is spread across
+    // the wave's own three and a half units. Over that long it is a reveal
+    // rather than a move, which is what the sharp pull at the arrival was not.
     marks.resonance = at
     timeline
       .to(this.story, { wave: 1, duration: waveDuration, ease: 'none' }, at)
       .to(this.morph, { progress: 2, duration: waveDuration, ease: 'none' }, at)
+      .to(this.cameraDistance, { base: 1.5, duration: waveDuration, ease: 'power1.inOut' }, at)
       .to(this.spin, { scroll: `+=${holdSpin*0.6}`, duration: waveDuration, ease: 'none' }, at)
     at += waveDuration
     dwell('network', hold*0.7)
@@ -1599,11 +1743,92 @@ class App {
 
     e.preventDefault()
 
-    const { wheelSensitivity, scrollSensitivity } = this.zoomParams
+    const { wheelSensitivity, scrollSensitivity, spill } = this.zoomParams
     const sensitivity = (e.ctrlKey || e.metaKey) ? wheelSensitivity : scrollSensitivity
 
     // Pinch out and wheel up both arrive as negative deltaY: zoom in.
-    this._zoomBy(-this._wheelPixels(e)*sensitivity, this._hitAt(e.clientX, e.clientY))
+    const step = -this._wheelPixels(e)*sensitivity
+
+    // A push latches for as long as the wheel keeps turning the same way.
+    // Without this it would fire exactly once: the push hands the framing back,
+    // the zoom suddenly has room again, and every notch after it silently goes
+    // back to zooming — one push, then stuck in the same place as before.
+    const push = this._push
+
+    if (push && Math.sign(step) === push.direction && performance.now() - push.at < 900) {
+      this._advance(push.direction)
+      return
+    }
+
+    const before = this.zoom.target
+
+    this._zoomBy(step, this._hitAt(e.clientX, e.clientY))
+
+    // Whatever the zoom could not take — because the camera is already as close
+    // or as far as it goes — pushes the story instead. Being at the closest the
+    // camera can get, still pushing, and having nothing happen is exactly what
+    // being stuck feels like; there is always somewhere for the gesture to go.
+    const surplus = step - (this.zoom.target - before)
+
+    if (Math.abs(surplus) > spill) this._advance(Math.sign(surplus))
+  }
+
+  /**
+   * Pushes the story to its next resting point — one push, one act.
+   *
+   * Every act boundary is already recorded in `storyMarks`, in timeline units,
+   * and the timeline maps linearly onto the document's scroll range. So the
+   * next act is a scroll position, and the browser's own smooth scroll is what
+   * carries the page there. Pushing forward while zoomed in also hands the
+   * framing back on the way, since `_releaseZoom()` is watching that travel.
+   */
+  _advance(direction) {
+    if (!this.storyMarks || !this.scrollTimeline) return
+
+    // Refreshed even while a push is still settling, so a wheel that keeps
+    // turning keeps the latch in `_onWheel` alive.
+    this._push = { direction, at: performance.now() }
+
+    if (this._advancing) return
+
+    const range = document.documentElement.scrollHeight - window.innerHeight
+    const duration = this.scrollTimeline.duration()
+
+    if (range <= 0 || duration <= 0) return
+
+    // Where the story is now, in the timeline's own units.
+    const at = window.scrollY/range*duration
+
+    // A mark this close is the one being sat on, not the one to go to —
+    // without it a push at an act's own boundary would go nowhere.
+    const slack = 0.05
+
+    const marks = Object.values(this.storyMarks).sort((a, b) => a - b)
+
+    const next = direction > 0
+      ? marks.find(mark => mark > at + slack)
+      : marks.slice().reverse().find(mark => mark < at - slack)
+
+    // Past the last act in either direction, push to the end of the document
+    // rather than refusing: the credits are down there too.
+    const target = next === undefined ? (direction > 0 ? duration : 0) : next
+
+    // A push means "take me to the next act as it was composed", so the zoom
+    // deviation goes with it rather than riding along and dividing the shot.
+    // This is the same thing `_releaseZoom()` does for a hand-driven travel,
+    // only all at once — the eased `zoom.level` still glides there.
+    this.zoom.target = 0
+    this.zoomPivotTarget.set(0, 0, 0)
+
+    this._advancing = true
+
+    window.scrollTo({ top: Math.round(target/duration*range), behavior: 'smooth' })
+
+    // The browser's smooth scroll reports no completion, and one wheel gesture
+    // is a burst of events — without a lock a single flick would fire a dozen
+    // pushes and shoot straight past the act it was aimed at.
+    clearTimeout(this._advanceTimer)
+    this._advanceTimer = setTimeout(() => { this._advancing = false }, 700)
   }
 
   /**
@@ -1938,9 +2163,9 @@ class App {
     // must not also chase the cursor — at 8x a wave of the mouse would sweep
     // the frame across most of the disc.
     if (this.morph.progress < 0.5 && this.intersects.length > 0 && this.zoom.target <= 0) {
-      this.diveTargetRaw
-        .copy(this.intersects[0].point)
-        .clampLength(0, this.galaxyRadius*this.diveParams.reach)
+      const node = this._nearestNode(this.intersects[0].point)
+
+      if (node) this.diveTargetLocal.copy(node)
     }
 
     if (this.intersects.length === 0) { // Mouseleave

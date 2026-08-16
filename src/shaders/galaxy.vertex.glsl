@@ -8,6 +8,7 @@ uniform float uScale;
 uniform float uMaxSize;
 uniform float uColorRange;
 uniform float uSizeRange;
+uniform float uNearFade;
 uniform vec3 uNormal;
 
 varying vec3 vColor;
@@ -34,7 +35,15 @@ void main() {
   vec3 normal = normalize((modelViewMatrix * vec4(uNormal, 0.0)).xyz);
   float facing = abs(dot(normal, normalize(-mvPosition.xyz)));
 
-  vFade = mix(0.55, 1.0, smoothstep(0.0, 1.0, facing));
+  // The sprites nearest the camera are what blow the frame out. The size cap
+  // stops any one of them covering the viewport, but it does nothing about
+  // *density*: fly in close and dozens of capped sprites overlap on the same
+  // pixels, additive blending stacks them past 1, and the bloom pass spreads
+  // that saturated patch into a smooth white ball. A star you fly past should
+  // leave the frame rather than smear across it, so the near ones fade out.
+  float near = smoothstep(uNearFade*0.2, uNearFade, -mvPosition.z);
+
+  vFade = mix(0.55, 1.0, smoothstep(0.0, 1.0, facing))*near;
 
   vColor = aColor*uColorRange;
 }

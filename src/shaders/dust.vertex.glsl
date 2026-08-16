@@ -8,6 +8,7 @@ uniform float uPixelRatio;
 uniform float uScale;
 uniform float uMaxSize;
 uniform float uSizeRange;
+uniform float uNearFade;
 uniform vec3 uNormal;
 
 varying float vVariation;
@@ -33,6 +34,10 @@ void main() {
 
   vFacing = abs(dot(normal, toCamera));
 
+  // Absorption right in front of the lens is not absorption, it is a black
+  // smear. Released on the same schedule as the light it is hiding.
+  float near = smoothstep(uNearFade*0.2, uNearFade, -mvPosition.z);
+
   vVariation = aVariation;
-  vOpacity = aOpacity;
+  vOpacity = aOpacity*near;
 }

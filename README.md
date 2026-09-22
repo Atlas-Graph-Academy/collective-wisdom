@@ -1,5 +1,23 @@
 # Collective wisdom
 
+## FIELD spatial interaction study
+
+The independent [FIELD prototype](./spatial-field/README.md) lives in
+`spatial-field/`. It uses Vite and Three.js with its own dependencies:
+
+```shell
+cd spatial-field
+npm ci
+npm run dev -- --port 5178
+```
+
+Open `http://localhost:5178/`. Run `npm run build` in that directory to create
+`spatial-field/dist`. If port 5178 is already serving another copy, stop that
+server first or choose a different port. The original galaxy demo below keeps
+its separate Parcel setup.
+
+## Original galaxy demo
+
 A single field of 2,879 instanced triangles that morphs, on scroll, from a brain
 through a lightbulb and a sphere, scatters, reassembles as the brain, and finally
 opens out into a spiral galaxy you can fly into.
